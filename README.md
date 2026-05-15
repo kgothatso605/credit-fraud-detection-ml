@@ -6,7 +6,7 @@
 
 > Production-ready machine learning framework for credit card fraud detection with deployment capabilities
 
-## 🎯 Project Overview
+##  Project Overview
 
 End-to-end fraud detection system built from scratch, achieving 76.28% precision with 9.04% recall through systematic methodology and professional ML practices.
 
@@ -25,15 +25,15 @@ End-to-end fraud detection system built from scratch, achieving 76.28% precision
 
 | Metric | Value | Status |
 |--------|-------|--------|
-| Precision | 76.28% | ✅ High |
-| Recall | 9.04% | ⚠️  Conservative |
+| Precision | 76.28% |  High |
+| Recall | 9.04% |   Conservative |
 | F1-Score | 16.17% | Best balance |
 | Training Time | 36.7s | ⚡ Fast |
 | Top Feature | terminal_fraud_rate | 29.75% importance |
 
 **Key Finding**: Discovered fundamental precision-recall constraint where 85%+ precision requires <1% recall.
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
 End-to-End Pipeline:
@@ -56,7 +56,7 @@ Raw Data → Feature Engineering → Model Training → Evaluation → Deploymen
 - Techniques: Baseline, Class Weights, SMOTE, Threshold Tuning
 - **Selected**: Random Forest Baseline (optimal precision-recall balance)
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Installation
 
@@ -132,7 +132,7 @@ curl -X POST "http://localhost:8000/predict" \
      -d '{"transaction_id": 12345, "amount": 100.50, ...}'
 ```
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 credit_fraud_ml/
@@ -150,7 +150,7 @@ credit_fraud_ml/
 └── reports/                 # Figures & results
 ```
 
-## 🔬 Methodology
+##  Methodology
 
 ### Phase 1: EDA (Days 1-3)
 
@@ -182,7 +182,7 @@ credit_fraud_ml/
 - Monitoring & logging
 - Model versioning
 
-## 🎓 Key Learnings
+##  Key Learnings
 
 ### 1. Feature Engineering > Model Selection
 Terminal features dominate (58%) despite testing 5 different model types.
@@ -196,7 +196,7 @@ Testing 20 configurations revealed constraints invisible from ad-hoc testing.
 ### 4. Honest Limitation Documentation
 85% precision target proved impossible (requires <1% recall). Documenting why matters as much as successes.
 
-## 📈 Performance Optimization
+##  Performance Optimization
 
 ### Current Model
 - **Precision**: 76.28%
@@ -209,7 +209,7 @@ Testing 20 configurations revealed constraints invisible from ad-hoc testing.
 3. Ensemble methods (stacking)
 4. Deep learning (LSTM for sequences)
 
-## 🐳 Deployment
+##  Deployment
 
 ### Docker
 
@@ -237,7 +237,7 @@ kubectl get pods -l app=fraud-detector
 - Health check at `/health`
 - Model performance tracking
 
-## 🧪 Testing
+##  Testing
 
 ```bash
 # Run all tests
@@ -250,7 +250,7 @@ pytest tests/ --cov=src --cov-report=html
 pytest tests/test_features.py -v
 ```
 
-## 📝 API Documentation
+##  API Documentation
 
 Once running, visit: `http://localhost:8000/docs`
 
@@ -271,29 +271,29 @@ Once running, visit: `http://localhost:8000/docs`
 **GET /health** - Health check
 **GET /metrics** - Prometheus metrics
 
-## 👤 Author
+##  Author
 
 **Kgothatso Ntumbe**  
 MSc Physics Student, University of the Witwatersrand  
 Aspiring AI Engineer & Entrepreneur
 
-## 📄 License
+##  License
 
 MIT License - See LICENSE file for details
 
-## 🙏 Acknowledgments
+##  Acknowledgments
 
 - **Dataset**: Kaggle - Credit Card Fraud Detection Challenge
 - **Platform**: CERN SWAN for development
 - **Tools**: scikit-learn, XGBoost, LightGBM, CatBoost, FastAPI
 
-## 📚 Documentation
+##  Documentation
 
 - [API Documentation](docs/api_documentation.md)
 - [Feature Engineering Guide](docs/feature_engineering.md)
 - [Deployment Guide](docs/deployment.md)
 
-## 🗺️ Roadmap
+##  Roadmap
 
 - [x] EDA & Feature Engineering
 - [x] Model Training & Evaluation
@@ -305,4 +305,4 @@ MIT License - See LICENSE file for details
 
 ---
 
-**⭐ If you find this project useful, please consider giving it a star!**
+** If you find this project useful, please consider giving it a star!**
