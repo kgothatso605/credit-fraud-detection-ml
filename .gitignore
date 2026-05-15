@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# Data files (too large for Git)
+data/raw/*.csv
+data/processed/*.csv
+*.csv
+*.pkl
+*.h5
+*.hdf5
+
+# Keep directory structure
+!data/.gitkeep
+!models/.gitkeep
+
+# Models (use DVC or Git LFS for large models)
+models/*.pkl
+models/*.joblib
+models/*.h5
+!models/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reports
+reports/figures/*.png
+reports/figures/*.pdf
+reports/results/*.json
+!reports/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.envrc
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Deployment
+deployment/.env
+deployment/secrets/
