@@ -9,7 +9,7 @@ This guide contains ALL the code from your completed phases, restructured profes
 - ✅ Deployment phase added
 - ✅ Production-ready patterns
 
-## 📦 What's Included
+## What's Included
 
 ### From Your Completed Work:
 1. **Phase 1-2**: EDA (01_eda.ipynb, 02_eda_complete.ipynb)
@@ -25,7 +25,7 @@ This guide contains ALL the code from your completed phases, restructured profes
    - Model serving
    - Monitoring & logging
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Step 1: Copy Your Existing Data
 

@@ -1,0 +1,11 @@
+{
+  "models_trained": [
+    "random_forest",
+    "xgboost",
+    "lightgbm"
+  ],
+  "training_samples": 232984,
+  "validation_samples": 58247,
+  "features": 51,
+  "trained_at": "2026-05-15T13:42:44.813547"
+}
