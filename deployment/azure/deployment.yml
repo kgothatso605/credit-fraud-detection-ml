@@ -1,0 +1,42 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
+
+name: xgboost-blue
+endpoint_name: fraud-detection-endpoint
+description: XGBoost fraud detector — primary (blue) deployment
+
+model:
+  name: fraud-xgboost
+  version: 1
+  path: ../../models/
+
+code_configuration:
+  code: .
+  scoring_script: score.py
+
+environment:
+  name: fraud-detection-env
+  conda_file: conda_env.yml
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu20.04:latest
+
+instance_type: Standard_DS2_v2
+instance_count: 1
+
+# Send 100 % of traffic to this deployment (update when adding canary)
+request_settings:
+  request_timeout_ms: 90000
+  max_concurrent_requests_per_instance: 10
+  max_queue_wait_ms: 60000
+
+liveness_probe:
+  initial_delay: 10
+  period: 10
+  timeout: 2
+  success_threshold: 1
+  failure_threshold: 30
+
+readiness_probe:
+  initial_delay: 10
+  period: 10
+  timeout: 2
+  success_threshold: 1
+  failure_threshold: 30

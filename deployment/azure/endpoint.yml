@@ -1,0 +1,15 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineEndpoint.schema.json
+
+name: fraud-detection-endpoint
+description: >
+  Real-time fraud detection endpoint powered by XGBoost (ROC-AUC 0.9518).
+  Accepts transaction records with customer and terminal profile fields
+  and returns fraud probability + risk level.
+
+auth_mode: key
+
+tags:
+  project: credit-fraud-detection
+  model: xgboost
+  team: ml-team
+  env: production
