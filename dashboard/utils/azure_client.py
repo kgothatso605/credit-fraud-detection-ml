@@ -61,10 +61,10 @@ class FraudDetectorClient:
     # ── remote ──────────────────────────────────────────────────────────────
 
     def _score_remote(self, transactions: list[dict]) -> list[dict]:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        # Azure ML endpoint needs Bearer key; App Service endpoint needs none
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         payload = json.dumps({"transactions": transactions})
         t0 = time.perf_counter()
         resp = requests.post(self.endpoint_url, data=payload, headers=headers, timeout=30)
