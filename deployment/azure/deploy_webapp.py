@@ -5,11 +5,12 @@ This approach avoids the Azure ML ACR dependency entirely.
 
 Prerequisites:
     brew install azure-cli
-    az login
+    az login                  ← must run this FIRST in your terminal
 
 Usage:
     python deployment/azure/deploy_webapp.py
 """
+import json
 import os
 import shutil
 import subprocess
@@ -18,94 +19,108 @@ import tempfile
 from pathlib import Path
 
 # ── config ────────────────────────────────────────────────────────────────────
-RESOURCE_GROUP  = "2445026-rg"
-APP_NAME        = "fraud-detection-api"       # must be globally unique
-LOCATION        = "southafricanorth"           # closest Azure region to Wits
-SKU             = "B1"                         # Basic tier — free for students
-PYTHON_VERSION  = "PYTHON|3.11"
-REPO_ROOT       = Path(__file__).resolve().parents[2]
-WEBAPP_SRC      = Path(__file__).resolve().parent / "webapp"
+RESOURCE_GROUP = "2445026-rg"
+APP_NAME       = "fraud-detect-api-2445026"   # globally unique; change if taken
+SKU            = "B1"
+PYTHON_VERSION = "PYTHON|3.11"
+REPO_ROOT      = Path(__file__).resolve().parents[2]
+WEBAPP_SRC     = Path(__file__).resolve().parent / "webapp"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
+def run(cmd: list[str], check: bool = True, **kwargs) -> subprocess.CompletedProcess:
+    """Run az command and always show stderr on failure."""
     print(f"  $ {' '.join(cmd)}")
-    result = subprocess.run(cmd, check=True, text=True, capture_output=True, **kwargs)
+    result = subprocess.run(cmd, text=True, capture_output=True, **kwargs)
     if result.stdout.strip():
         print(f"    {result.stdout.strip()}")
+    if result.returncode != 0:
+        print(f"\n  ERROR (exit {result.returncode}):")
+        print(f"  {result.stderr.strip()}")
+        if check:
+            sys.exit(1)
     return result
 
 
+def get_rg_location() -> str:
+    """Read location from the existing resource group."""
+    result = run(
+        ["az", "group", "show", "--name", RESOURCE_GROUP, "--query", "location", "-o", "tsv"],
+        check=True,
+    )
+    location = result.stdout.strip()
+    print(f"    Resource group location: {location}")
+    return location
+
+
 def check_az_cli() -> None:
-    try:
-        run(["az", "--version"])
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        print("\nERROR: Azure CLI not found.")
-        print("Install it with:  brew install azure-cli")
-        print("Then log in:      az login")
+    result = subprocess.run(["az", "account", "show"], capture_output=True, text=True)
+    if result.returncode != 0:
+        print("\nERROR: Not logged in to Azure CLI.")
+        print("Run:  az login")
+        print("Then re-run this script.")
         sys.exit(1)
+    account = json.loads(result.stdout)
+    print(f"  Logged in as: {account.get('user', {}).get('name', '?')}")
+    print(f"  Subscription: {account.get('name', '?')} ({account.get('id', '?')[:8]}...)")
 
 
 def build_deploy_package() -> Path:
-    """
-    Copy webapp source + models into a temp directory.
-    az webapp up will zip and upload this directory.
-    """
+    """Bundle webapp source + models + src into a temp directory."""
     tmp = Path(tempfile.mkdtemp()) / "fraud_api"
     tmp.mkdir(parents=True)
 
-    # Copy webapp source files
     for f in WEBAPP_SRC.iterdir():
         shutil.copy2(f, tmp / f.name)
 
-    # Copy models (needed at runtime)
-    models_dst = tmp / "models"
-    shutil.copytree(REPO_ROOT / "models", models_dst)
+    shutil.copytree(REPO_ROOT / "models", tmp / "models")
+    shutil.copytree(REPO_ROOT / "src",    tmp / "src")
 
-    # Copy src/ (feature engineering)
-    src_dst = tmp / "src"
-    shutil.copytree(REPO_ROOT / "src", src_dst)
-
-    # Write startup command file
+    # Azure App Service startup command
     (tmp / "startup.sh").write_text(
         "#!/bin/bash\n"
-        "pip install -r requirements.txt --quiet\n"
-        f"MODELS_DIR=/home/site/wwwroot/models uvicorn app:app --host 0.0.0.0 --port 8000\n"
+        "pip install -r /home/site/wwwroot/requirements.txt --quiet\n"
+        "MODELS_DIR=/home/site/wwwroot/models "
+        "uvicorn app:app --host 0.0.0.0 --port 8000\n"
     )
     os.chmod(tmp / "startup.sh", 0o755)
 
-    print(f"  Deploy package prepared at: {tmp}")
-    return tmp
+    # Zip the package
+    zip_path = Path(tempfile.mkdtemp()) / "fraud_api.zip"
+    shutil.make_archive(str(zip_path.with_suffix("")), "zip", str(tmp))
+
+    print(f"  Package: {zip_path}  ({zip_path.stat().st_size // 1024 // 1024} MB)")
+    return zip_path
 
 
-def deploy(package_dir: Path) -> str:
-    """Create App Service Plan + Web App and deploy code."""
+def deploy(zip_path: Path, location: str) -> str:
+    plan_name = f"{APP_NAME}-plan"
 
-    print("\n[1/4] Creating App Service Plan ...")
+    print(f"\n[1/4] Creating App Service Plan '{plan_name}' in {location} ...")
     run([
         "az", "appservice", "plan", "create",
-        "--name",           f"{APP_NAME}-plan",
+        "--name",           plan_name,
         "--resource-group", RESOURCE_GROUP,
-        "--location",       LOCATION,
+        "--location",       location,
         "--sku",            SKU,
         "--is-linux",
     ])
 
-    print("\n[2/4] Creating Web App ...")
+    print(f"\n[2/4] Creating Web App '{APP_NAME}' ...")
     run([
         "az", "webapp", "create",
         "--name",           APP_NAME,
         "--resource-group", RESOURCE_GROUP,
-        "--plan",           f"{APP_NAME}-plan",
+        "--plan",           plan_name,
         "--runtime",        PYTHON_VERSION,
     ])
 
-    print("\n[3/4] Configuring startup & environment ...")
+    print("\n[3/4] Configuring startup command & env vars ...")
     run([
         "az", "webapp", "config", "set",
-        "--name",            APP_NAME,
-        "--resource-group",  RESOURCE_GROUP,
-        "--startup-file",    "startup.sh",
+        "--name",           APP_NAME,
+        "--resource-group", RESOURCE_GROUP,
+        "--startup-file",   "startup.sh",
     ])
     run([
         "az", "webapp", "config", "appsettings", "set",
@@ -113,48 +128,46 @@ def deploy(package_dir: Path) -> str:
         "--resource-group", RESOURCE_GROUP,
         "--settings",
         "MODELS_DIR=/home/site/wwwroot/models",
-        "SCM_DO_BUILD_DURING_DEPLOYMENT=true",
+        "SCM_DO_BUILD_DURING_DEPLOYMENT=false",
     ])
 
-    print("\n[4/4] Deploying code (this may take 2–3 min) ...")
+    print("\n[4/4] Uploading code (may take 2–4 min) ...")
     run([
         "az", "webapp", "deploy",
         "--name",           APP_NAME,
         "--resource-group", RESOURCE_GROUP,
-        "--src-path",       str(package_dir),
+        "--src-path",       str(zip_path),
         "--type",           "zip",
-    ], cwd=str(package_dir))
+        "--async",          "false",
+    ])
 
-    url = f"https://{APP_NAME}.azurewebsites.net"
-    return url
+    return f"https://{APP_NAME}.azurewebsites.net"
 
 
 def print_result(url: str) -> None:
     print("\n" + "=" * 60)
     print("DEPLOYMENT COMPLETE")
     print("=" * 60)
-    print(f"  App URL    : {url}")
-    print(f"  Score URL  : {url}/score")
-    print(f"  Health URL : {url}/")
-    print(f"  API docs   : {url}/docs")
+    print(f"  Health check : {url}/")
+    print(f"  Score URL    : {url}/score")
+    print(f"  API docs     : {url}/docs")
     print("=" * 60)
-    print("\nSet this in dashboard/.env:")
-    print(f'  AZURE_ENDPOINT_URL="{url}/score"')
-    print("  AZURE_ENDPOINT_KEY=  (leave blank — App Service uses no API key)")
-    print("\nUpdate dashboard/utils/azure_client.py to use Bearer-free auth,")
-    print("or simply leave the key blank and the client falls back to local model.")
+    print("\nPaste into dashboard sidebar (API Key: leave blank):")
+    print(f"  {url}/score")
 
 
 def main() -> None:
-    check_az_cli()
     print("\n=== Fraud Detection API — Azure App Service Deployment ===\n")
 
-    pkg = build_deploy_package()
+    check_az_cli()
+    location = get_rg_location()
+    zip_path = build_deploy_package()
+
     try:
-        url = deploy(pkg)
+        url = deploy(zip_path, location)
         print_result(url)
     finally:
-        shutil.rmtree(pkg.parent, ignore_errors=True)
+        shutil.rmtree(zip_path.parent, ignore_errors=True)
 
 
 if __name__ == "__main__":
