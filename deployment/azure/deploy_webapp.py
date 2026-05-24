@@ -53,6 +53,46 @@ def get_rg_location() -> str:
     return location
 
 
+def find_allowed_location() -> str:
+    """
+    Azure for Students restricts deployments to specific regions.
+    Try common allowed regions in preference order until one accepts the plan.
+    """
+    candidates = [
+        "eastus", "westus", "westus2", "westus3",
+        "northeurope", "westeurope",
+        "southeastasia", "australiaeast",
+        "canadacentral", "uksouth", "japaneast",
+    ]
+    plan_name = f"{APP_NAME}-plan"
+    print("  Scanning allowed regions for App Service B1 ...")
+    for loc in candidates:
+        probe = subprocess.run(
+            [
+                "az", "appservice", "plan", "create",
+                "--name",           plan_name,
+                "--resource-group", RESOURCE_GROUP,
+                "--location",       loc,
+                "--sku",            SKU,
+                "--is-linux",
+            ],
+            text=True, capture_output=True,
+        )
+        if probe.returncode == 0:
+            print(f"    Allowed region found: {loc}")
+            return loc          # plan was created successfully
+        if "disallowed" in probe.stderr.lower() or "policy" in probe.stderr.lower():
+            print(f"    {loc}: blocked by policy")
+            continue
+        # Any other error (quota, duplicate, etc.) — stop and report
+        print(f"\n  ERROR in {loc}:\n  {probe.stderr.strip()}")
+        sys.exit(1)
+
+    print("\nERROR: None of the candidate regions are allowed by your subscription policy.")
+    print("Contact your Azure administrator or try a different subscription.")
+    sys.exit(1)
+
+
 def check_az_cli() -> None:
     result = subprocess.run(["az", "account", "show"], capture_output=True, text=True)
     if result.returncode != 0:
@@ -93,20 +133,11 @@ def build_deploy_package() -> Path:
     return zip_path
 
 
-def deploy(zip_path: Path, location: str) -> str:
+def deploy(zip_path: Path) -> str:
     plan_name = f"{APP_NAME}-plan"
+    # App Service Plan is already created by find_allowed_location()
 
-    print(f"\n[1/4] Creating App Service Plan '{plan_name}' in {location} ...")
-    run([
-        "az", "appservice", "plan", "create",
-        "--name",           plan_name,
-        "--resource-group", RESOURCE_GROUP,
-        "--location",       location,
-        "--sku",            SKU,
-        "--is-linux",
-    ])
-
-    print(f"\n[2/4] Creating Web App '{APP_NAME}' ...")
+    print(f"\n[2/4] Creating Web App '{APP_NAME}' ...")  # plan already exists
     run([
         "az", "webapp", "create",
         "--name",           APP_NAME,
@@ -160,11 +191,14 @@ def main() -> None:
     print("\n=== Fraud Detection API — Azure App Service Deployment ===\n")
 
     check_az_cli()
-    location = get_rg_location()
-    zip_path = build_deploy_package()
+    get_rg_location()   # informational only
 
+    print("\n[1/4] Finding an allowed region and creating App Service Plan ...")
+    find_allowed_location()   # creates the plan in the first allowed region
+
+    zip_path = build_deploy_package()
     try:
-        url = deploy(zip_path, location)
+        url = deploy(zip_path)
         print_result(url)
     finally:
         shutil.rmtree(zip_path.parent, ignore_errors=True)
