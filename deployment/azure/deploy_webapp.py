@@ -53,25 +53,50 @@ def get_rg_location() -> str:
     return location
 
 
+def get_all_locations() -> list[str]:
+    """Return every Azure region available to this subscription."""
+    r = subprocess.run(
+        ["az", "account", "list-locations", "--query", "[].name", "-o", "tsv"],
+        text=True, capture_output=True,
+    )
+    if r.returncode != 0:
+        return []
+    locs = [l.strip() for l in r.stdout.strip().splitlines() if l.strip()]
+    # Prefer cheaper / well-known regions first
+    prefer = [
+        "eastus", "westus", "westus2", "centralus", "northcentralus",
+        "southcentralus", "westus3", "northeurope", "westeurope",
+        "uksouth", "ukwest", "canadacentral", "canadaeast",
+        "australiaeast", "australiasoutheast", "southeastasia",
+        "eastasia", "japaneast", "japanwest", "brazilsouth",
+        "eastus2",
+    ]
+    ordered = [l for l in prefer if l in locs]
+    ordered += [l for l in locs if l not in ordered]
+    return ordered
+
+
 def find_allowed_location() -> str:
     """
-    Azure for Students restricts deployments to specific regions.
-    Try common allowed regions in preference order until one accepts the plan.
+    Azure for Students restricts deployments via policy.
+    Probe every available region until one accepts the App Service Plan.
+    Also creates a new resource group in that region if needed.
     """
-    candidates = [
-        "eastus", "westus", "westus2", "westus3",
-        "northeurope", "westeurope",
-        "southeastasia", "australiaeast",
-        "canadacentral", "uksouth", "japaneast",
-    ]
-    plan_name = f"{APP_NAME}-plan"
-    print("  Scanning allowed regions for App Service B1 ...")
-    for loc in candidates:
+    all_locs = get_all_locations()
+    if not all_locs:
+        all_locs = ["eastus", "westus", "westus2", "northeurope", "westeurope"]
+
+    plan_name  = f"{APP_NAME}-plan"
+    # We may need a separate RG in the allowed region
+    deploy_rg  = RESOURCE_GROUP
+
+    print(f"  Probing {len(all_locs)} regions (this may take ~1 min) ...")
+    for loc in all_locs:
         probe = subprocess.run(
             [
                 "az", "appservice", "plan", "create",
                 "--name",           plan_name,
-                "--resource-group", RESOURCE_GROUP,
+                "--resource-group", deploy_rg,
                 "--location",       loc,
                 "--sku",            SKU,
                 "--is-linux",
@@ -79,17 +104,28 @@ def find_allowed_location() -> str:
             text=True, capture_output=True,
         )
         if probe.returncode == 0:
-            print(f"    Allowed region found: {loc}")
-            return loc          # plan was created successfully
-        if "disallowed" in probe.stderr.lower() or "policy" in probe.stderr.lower():
-            print(f"    {loc}: blocked by policy")
+            print(f"    Allowed region: {loc}  (resource group: {deploy_rg})")
+            return loc
+
+        err = probe.stderr.lower()
+        if "disallowed" in err or "policy" in err or "not available" in err:
+            print(f"    {loc}: blocked")
             continue
-        # Any other error (quota, duplicate, etc.) — stop and report
-        print(f"\n  ERROR in {loc}:\n  {probe.stderr.strip()}")
+        if "already exists" in err:
+            # Plan already created in a previous run
+            print(f"    Plan already exists in {loc}")
+            return loc
+        # Unexpected error — show it
+        print(f"\n  Unexpected error in {loc}:\n  {probe.stderr.strip()}")
         sys.exit(1)
 
-    print("\nERROR: None of the candidate regions are allowed by your subscription policy.")
-    print("Contact your Azure administrator or try a different subscription.")
+    print("\nERROR: No allowed region found after checking all available locations.")
+    print("\nYour Azure for Students subscription has very restrictive policies.")
+    print("Options:")
+    print("  1. Ask your course administrator which region is allowed.")
+    print("  2. Run the dashboard in local-model mode (no endpoint needed):")
+    print("       streamlit run dashboard/app.py")
+    print("     Then click Start — it uses the local XGBoost model automatically.")
     sys.exit(1)
 
 
