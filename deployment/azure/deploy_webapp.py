@@ -1,11 +1,9 @@
 """
 Deploy the fraud detection FastAPI app to Azure App Service.
 
-This approach avoids the Azure ML ACR dependency entirely.
-
 Prerequisites:
     brew install azure-cli
-    az login                  ← must run this FIRST in your terminal
+    az login
 
 Usage:
     python deployment/azure/deploy_webapp.py
@@ -20,7 +18,7 @@ from pathlib import Path
 
 # ── config ────────────────────────────────────────────────────────────────────
 RESOURCE_GROUP = "2445026-rg"
-APP_NAME       = "fraud-detect-api-2445026"   # globally unique; change if taken
+APP_NAME       = "fraud-detect-api-2445026"
 SKU            = "B1"
 PYTHON_VERSION = "PYTHON|3.11"
 REPO_ROOT      = Path(__file__).resolve().parents[2]
@@ -28,12 +26,32 @@ WEBAPP_SRC     = Path(__file__).resolve().parent / "webapp"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _brew_env() -> dict:
+    """
+    Fix the macOS/libexpat symbol mismatch in Azure CLI 2.86 on Python 3.13.
+    Prepend Homebrew's lib directory so the CLI picks up the correct libexpat.
+    """
+    env = os.environ.copy()
+    brew = subprocess.run(["brew", "--prefix"], capture_output=True, text=True)
+    if brew.returncode == 0:
+        lib = os.path.join(brew.stdout.strip(), "lib")
+        existing = env.get("DYLD_LIBRARY_PATH", "")
+        env["DYLD_LIBRARY_PATH"] = f"{lib}:{existing}" if existing else lib
+    return env
+
+
+_ENV = _brew_env()   # computed once at import time
+
+
 def run(cmd: list[str], check: bool = True, **kwargs) -> subprocess.CompletedProcess:
-    """Run az command and always show stderr on failure."""
     print(f"  $ {' '.join(cmd)}")
-    result = subprocess.run(cmd, text=True, capture_output=True, **kwargs)
+    result = subprocess.run(cmd, text=True, capture_output=True, env=_ENV, **kwargs)
     if result.stdout.strip():
-        print(f"    {result.stdout.strip()}")
+        # suppress large JSON blobs
+        preview = result.stdout.strip()
+        if len(preview) > 300:
+            preview = preview[:300] + " ..."
+        print(f"    {preview}")
     if result.returncode != 0:
         print(f"\n  ERROR (exit {result.returncode}):")
         print(f"  {result.stderr.strip()}")
@@ -42,107 +60,113 @@ def run(cmd: list[str], check: bool = True, **kwargs) -> subprocess.CompletedPro
     return result
 
 
-def get_rg_location() -> str:
-    """Read location from the existing resource group."""
-    result = run(
-        ["az", "group", "show", "--name", RESOURCE_GROUP, "--query", "location", "-o", "tsv"],
-        check=True,
+def check_az_cli() -> None:
+    result = subprocess.run(
+        ["az", "account", "show"], capture_output=True, text=True, env=_ENV
     )
-    location = result.stdout.strip()
-    print(f"    Resource group location: {location}")
-    return location
+    if result.returncode != 0:
+        print("\nERROR: Not logged in to Azure CLI.  Run:  az login")
+        sys.exit(1)
+    account = json.loads(result.stdout)
+    print(f"  Logged in as : {account.get('user', {}).get('name', '?')}")
+    print(f"  Subscription : {account.get('name', '?')} ({account.get('id', '?')[:8]}...)")
+
+
+def get_rg_location() -> str:
+    r = run(
+        ["az", "group", "show", "--name", RESOURCE_GROUP, "--query", "location", "-o", "tsv"]
+    )
+    loc = r.stdout.strip()
+    print(f"    Resource group location: {loc}")
+    return loc
+
+
+def plan_existing_location() -> str | None:
+    """Return location if the App Service Plan already exists, else None."""
+    r = subprocess.run(
+        [
+            "az", "appservice", "plan", "show",
+            "--name",           f"{APP_NAME}-plan",
+            "--resource-group", RESOURCE_GROUP,
+            "--query",          "location",
+            "-o",               "tsv",
+        ],
+        capture_output=True, text=True, env=_ENV,
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip()
+    return None
 
 
 def get_all_locations() -> list[str]:
-    """Return every Azure region available to this subscription."""
     r = subprocess.run(
         ["az", "account", "list-locations", "--query", "[].name", "-o", "tsv"],
-        text=True, capture_output=True,
+        text=True, capture_output=True, env=_ENV,
     )
     if r.returncode != 0:
         return []
     locs = [l.strip() for l in r.stdout.strip().splitlines() if l.strip()]
-    # Prefer cheaper / well-known regions first
     prefer = [
-        "eastus", "westus", "westus2", "centralus", "northcentralus",
-        "southcentralus", "westus3", "northeurope", "westeurope",
-        "uksouth", "ukwest", "canadacentral", "canadaeast",
-        "australiaeast", "australiasoutheast", "southeastasia",
-        "eastasia", "japaneast", "japanwest", "brazilsouth",
-        "eastus2",
+        "southafricanorth",   # known-allowed for this subscription
+        "eastus", "westus", "westus2", "centralus",
+        "northcentralus", "southcentralus", "westus3",
+        "northeurope", "westeurope", "uksouth", "ukwest",
+        "canadacentral", "canadaeast",
+        "australiaeast", "australiasoutheast",
+        "southeastasia", "eastasia", "japaneast", "japanwest",
+        "brazilsouth", "eastus2",
     ]
     ordered = [l for l in prefer if l in locs]
     ordered += [l for l in locs if l not in ordered]
     return ordered
 
 
-def find_allowed_location() -> str:
-    """
-    Azure for Students restricts deployments via policy.
-    Probe every available region until one accepts the App Service Plan.
-    Also creates a new resource group in that region if needed.
-    """
-    all_locs = get_all_locations()
-    if not all_locs:
-        all_locs = ["eastus", "westus", "westus2", "northeurope", "westeurope"]
+def find_or_create_plan() -> str:
+    """Return the region of the App Service Plan, creating it if needed."""
+    existing = plan_existing_location()
+    if existing:
+        print(f"    App Service Plan already exists in '{existing}' — skipping create.")
+        return existing
 
-    plan_name  = f"{APP_NAME}-plan"
-    # We may need a separate RG in the allowed region
-    deploy_rg  = RESOURCE_GROUP
+    all_locs = get_all_locations() or [
+        "southafricanorth", "eastus", "westus", "northeurope", "westeurope"
+    ]
+    plan_name = f"{APP_NAME}-plan"
+    print(f"  Probing {len(all_locs)} regions ...")
 
-    print(f"  Probing {len(all_locs)} regions (this may take ~1 min) ...")
     for loc in all_locs:
         probe = subprocess.run(
             [
                 "az", "appservice", "plan", "create",
                 "--name",           plan_name,
-                "--resource-group", deploy_rg,
+                "--resource-group", RESOURCE_GROUP,
                 "--location",       loc,
                 "--sku",            SKU,
                 "--is-linux",
             ],
-            text=True, capture_output=True,
+            text=True, capture_output=True, env=_ENV,
         )
         if probe.returncode == 0:
-            print(f"    Allowed region: {loc}  (resource group: {deploy_rg})")
+            print(f"    Allowed region: {loc}")
             return loc
 
         err = probe.stderr.lower()
-        if "disallowed" in err or "policy" in err or "not available" in err:
-            print(f"    {loc}: blocked")
+        if any(k in err for k in ("disallowed", "policy", "not available", "not supported")):
+            print(f"    {loc}: blocked by policy")
             continue
         if "already exists" in err:
-            # Plan already created in a previous run
             print(f"    Plan already exists in {loc}")
             return loc
-        # Unexpected error — show it
-        print(f"\n  Unexpected error in {loc}:\n  {probe.stderr.strip()}")
+        print(f"\n  Unexpected error ({loc}):\n  {probe.stderr.strip()}")
         sys.exit(1)
 
-    print("\nERROR: No allowed region found after checking all available locations.")
-    print("\nYour Azure for Students subscription has very restrictive policies.")
-    print("Options:")
-    print("  1. Ask your course administrator which region is allowed.")
-    print("  2. Run the dashboard in local-model mode (no endpoint needed):")
-    print("       streamlit run dashboard/app.py")
-    print("     Then click Start — it uses the local XGBoost model automatically.")
+    print("\nERROR: No allowed region found. Ask your Azure administrator.")
+    print("Alternatively, run the dashboard with local inference:")
+    print("  streamlit run dashboard/app.py  (click Start — no endpoint needed)")
     sys.exit(1)
 
 
-def check_az_cli() -> None:
-    result = subprocess.run(["az", "account", "show"], capture_output=True, text=True)
-    if result.returncode != 0:
-        print("\nERROR: Not logged in to Azure CLI.")
-        print("Run:  az login")
-        print("Then re-run this script.")
-        sys.exit(1)
-    account = json.loads(result.stdout)
-    print(f"  Logged in as: {account.get('user', {}).get('name', '?')}")
-    print(f"  Subscription: {account.get('name', '?')} ({account.get('id', '?')[:8]}...)")
-
-
 def build_deploy_package() -> Path:
-    """Bundle webapp source + models + src into a temp directory."""
     tmp = Path(tempfile.mkdtemp()) / "fraud_api"
     tmp.mkdir(parents=True)
 
@@ -152,7 +176,6 @@ def build_deploy_package() -> Path:
     shutil.copytree(REPO_ROOT / "models", tmp / "models")
     shutil.copytree(REPO_ROOT / "src",    tmp / "src")
 
-    # Azure App Service startup command
     (tmp / "startup.sh").write_text(
         "#!/bin/bash\n"
         "pip install -r /home/site/wwwroot/requirements.txt --quiet\n"
@@ -161,26 +184,34 @@ def build_deploy_package() -> Path:
     )
     os.chmod(tmp / "startup.sh", 0o755)
 
-    # Zip the package
     zip_path = Path(tempfile.mkdtemp()) / "fraud_api.zip"
     shutil.make_archive(str(zip_path.with_suffix("")), "zip", str(tmp))
-
     print(f"  Package: {zip_path}  ({zip_path.stat().st_size // 1024 // 1024} MB)")
     return zip_path
 
 
+def webapp_exists() -> bool:
+    r = subprocess.run(
+        ["az", "webapp", "show", "--name", APP_NAME, "--resource-group", RESOURCE_GROUP],
+        capture_output=True, text=True, env=_ENV,
+    )
+    return r.returncode == 0
+
+
 def deploy(zip_path: Path) -> str:
     plan_name = f"{APP_NAME}-plan"
-    # App Service Plan is already created by find_allowed_location()
 
-    print(f"\n[2/4] Creating Web App '{APP_NAME}' ...")  # plan already exists
-    run([
-        "az", "webapp", "create",
-        "--name",           APP_NAME,
-        "--resource-group", RESOURCE_GROUP,
-        "--plan",           plan_name,
-        "--runtime",        PYTHON_VERSION,
-    ])
+    if webapp_exists():
+        print(f"\n[2/4] Web App '{APP_NAME}' already exists — skipping create.")
+    else:
+        print(f"\n[2/4] Creating Web App '{APP_NAME}' ...")
+        run([
+            "az", "webapp", "create",
+            "--name",           APP_NAME,
+            "--resource-group", RESOURCE_GROUP,
+            "--plan",           plan_name,
+            "--runtime",        PYTHON_VERSION,
+        ])
 
     print("\n[3/4] Configuring startup command & env vars ...")
     run([
@@ -219,18 +250,17 @@ def print_result(url: str) -> None:
     print(f"  Score URL    : {url}/score")
     print(f"  API docs     : {url}/docs")
     print("=" * 60)
-    print("\nPaste into dashboard sidebar (API Key: leave blank):")
+    print("\nPaste into the dashboard sidebar (leave API Key blank):")
     print(f"  {url}/score")
 
 
 def main() -> None:
     print("\n=== Fraud Detection API — Azure App Service Deployment ===\n")
-
     check_az_cli()
-    get_rg_location()   # informational only
+    get_rg_location()
 
-    print("\n[1/4] Finding an allowed region and creating App Service Plan ...")
-    find_allowed_location()   # creates the plan in the first allowed region
+    print("\n[1/4] Ensuring App Service Plan exists ...")
+    find_or_create_plan()
 
     zip_path = build_deploy_package()
     try:
