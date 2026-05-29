@@ -18,6 +18,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+# Load .env so AZURE_ENDPOINT_URL / AZURE_ENDPOINT_KEY are available
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+except ImportError:
+    pass
+
 # Allow imports from project root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dashboard.utils.azure_client import FraudDetectorClient
