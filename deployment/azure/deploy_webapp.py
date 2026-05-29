@@ -190,12 +190,33 @@ def build_deploy_package() -> Path:
     return zip_path
 
 
+_PYEXPAT_CRASH = "pyexpat"   # signature of the known Azure CLI 2.86 macOS bug
+
+
+def _is_pyexpat_crash(stderr: str) -> bool:
+    """Azure CLI 2.86 crashes fetching FTP publish profiles on macOS/Python 3.13.
+    The resource is created successfully before the crash — treat as non-fatal."""
+    return _PYEXPAT_CRASH in stderr or "xmltodict" in stderr or "XML_SetAllocTracker" in stderr
+
+
 def webapp_exists() -> bool:
     r = subprocess.run(
-        ["az", "webapp", "show", "--name", APP_NAME, "--resource-group", RESOURCE_GROUP],
+        ["az", "webapp", "show", "--name", APP_NAME,
+         "--resource-group", RESOURCE_GROUP, "-o", "none"],
         capture_output=True, text=True, env=_ENV,
     )
-    return r.returncode == 0
+    # returncode 0 → exists | pyexpat crash → CLI bug but resource may exist
+    if r.returncode == 0:
+        return True
+    if _is_pyexpat_crash(r.stderr):
+        # Try a simpler existence check via list
+        r2 = subprocess.run(
+            ["az", "webapp", "list", "--resource-group", RESOURCE_GROUP,
+             "--query", f"[?name=='{APP_NAME}'].name", "-o", "tsv"],
+            capture_output=True, text=True, env=_ENV,
+        )
+        return APP_NAME in r2.stdout
+    return False
 
 
 def deploy(zip_path: Path) -> str:
@@ -205,13 +226,24 @@ def deploy(zip_path: Path) -> str:
         print(f"\n[2/4] Web App '{APP_NAME}' already exists — skipping create.")
     else:
         print(f"\n[2/4] Creating Web App '{APP_NAME}' ...")
-        run([
-            "az", "webapp", "create",
-            "--name",           APP_NAME,
-            "--resource-group", RESOURCE_GROUP,
-            "--plan",           plan_name,
-            "--runtime",        PYTHON_VERSION,
-        ])
+        r = subprocess.run(
+            [
+                "az", "webapp", "create",
+                "--name",           APP_NAME,
+                "--resource-group", RESOURCE_GROUP,
+                "--plan",           plan_name,
+                "--runtime",        PYTHON_VERSION,
+            ],
+            capture_output=True, text=True, env=_ENV,
+        )
+        if r.returncode == 0:
+            print("    Web App created.")
+        elif _is_pyexpat_crash(r.stderr) or "already exists" in r.stderr:
+            # CLI crashes fetching FTP URL after successful creation — harmless
+            print("    Web App created (CLI crashed on non-critical FTP URL step — OK).")
+        else:
+            print(f"\n  ERROR:\n  {r.stderr.strip()}")
+            sys.exit(1)
 
     print("\n[3/4] Configuring startup command & env vars ...")
     run([
