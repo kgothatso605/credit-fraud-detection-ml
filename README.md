@@ -21,14 +21,14 @@ End-to-end fraud detection system built from scratch, achieving 76.28% precision
 
 **Acknowledgment**: We gratefully acknowledge Kaggle for providing this synthetic dataset for educational purposes.
 
-## 📊 Results Summary
+## Results Summary
 
 | Metric | Value | Status |
 |--------|-------|--------|
 | Precision | 76.28% |  High |
 | Recall | 9.04% |   Conservative |
 | F1-Score | 16.17% | Best balance |
-| Training Time | 36.7s | ⚡ Fast |
+| Training Time | 36.7s |  Fast |
 | Top Feature | terminal_fraud_rate | 29.75% importance |
 
 **Key Finding**: Discovered fundamental precision-recall constraint where 85%+ precision requires <1% recall.
